@@ -1,0 +1,167 @@
+{
+  "_doc": "Conformance fixture for spec §10.4 — Phase 1 public API for extra redaction suffixes. Cross-binding parity: dagstack-logger (Python), @dagstack/logger (TypeScript), go.dagstack.dev/logger (Go) MUST produce identical wire output for each case.",
+  "_doc_version": "1.0",
+  "_spec_section": "10.4",
+  "_validation_error_match": "substring",
+  "_validation_error_match_doc": "validation_failures[].expected_error is matched as a CASE-INSENSITIVE SUBSTRING against the binding's raised error message. Bindings are free to wrap, prefix, or localise the error provided that the substring appears verbatim. A future spec revision may introduce stable error codes via a separate `_meta/error_reasons.yaml` (config-spec pattern); until then substring matching is the cross-binding contract.",
+
+  "cases": [
+    {
+      "name": "additive_default",
+      "description": "extra_suffixes is unioned with the base set; non-matching keys pass through.",
+      "config": {
+        "redaction": {
+          "extra_suffixes": ["_apikey", "_x_internal_token"],
+          "replace_defaults": false
+        }
+      },
+      "input": {
+        "service.name": "order-service",
+        "request.id": "req-42",
+        "openai_api_key": "sk-real-secret",
+        "stripe_apikey": "pk-real-secret",
+        "x_internal_token": "tok-real-secret",
+        "user.id": 17
+      },
+      "expected": {
+        "service.name": "order-service",
+        "request.id": "req-42",
+        "openai_api_key": "***",
+        "stripe_apikey": "***",
+        "x_internal_token": "***",
+        "user.id": 17
+      }
+    },
+    {
+      "name": "replace_defaults_narrows_set",
+      "description": "replace_defaults=true swaps the base set for the supplied list — base patterns no longer mask.",
+      "config": {
+        "redaction": {
+          "extra_suffixes": ["_password"],
+          "replace_defaults": true
+        }
+      },
+      "input": {
+        "openai_api_key": "sk-still-secret-but-not-masked-here",
+        "db_password": "real-password-still-masked",
+        "client_secret": "this-also-not-masked-after-replace"
+      },
+      "expected": {
+        "openai_api_key": "sk-still-secret-but-not-masked-here",
+        "db_password": "***",
+        "client_secret": "this-also-not-masked-after-replace"
+      }
+    },
+    {
+      "name": "additive_recurses_into_nested_dict",
+      "description": "Per §10.2 redaction is recursive; an extra suffix matches at any depth.",
+      "config": {
+        "redaction": {
+          "extra_suffixes": ["_apikey"]
+        }
+      },
+      "input": {
+        "outer": "fine",
+        "nested": {
+          "stripe_apikey": "sk-deep-secret",
+          "regular_field": "ok"
+        }
+      },
+      "expected": {
+        "outer": "fine",
+        "nested": {
+          "stripe_apikey": "***",
+          "regular_field": "ok"
+        }
+      }
+    },
+    {
+      "name": "additive_recurses_into_list_of_maps",
+      "description": "Per §10.2 list-of-map traversal — an extra suffix matches keys inside list elements.",
+      "config": {
+        "redaction": {
+          "extra_suffixes": ["_apikey"]
+        }
+      },
+      "input": {
+        "events": [
+          {"type": "auth", "stripe_apikey": "sk-list-secret"},
+          {"type": "fetch", "url": "/api/orders"}
+        ]
+      },
+      "expected": {
+        "events": [
+          {"type": "auth", "stripe_apikey": "***"},
+          {"type": "fetch", "url": "/api/orders"}
+        ]
+      }
+    },
+    {
+      "name": "case_insensitive_match",
+      "description": "Suffix match is case-insensitive on the key, per §10.1.",
+      "config": {
+        "redaction": {
+          "extra_suffixes": ["_apikey"]
+        }
+      },
+      "input": {
+        "STRIPE_APIKEY": "sk-uppercase-secret",
+        "Stripe_ApiKey": "sk-mixed-case-secret"
+      },
+      "expected": {
+        "STRIPE_APIKEY": "***",
+        "Stripe_ApiKey": "***"
+      }
+    },
+    {
+      "name": "replace_defaults_with_empty_extra_disables_redaction",
+      "description": "replace_defaults=true with an empty extra_suffixes list turns off all suffix-based redaction. Allowed but drastic; downstream auditing should warn on this configuration.",
+      "config": {
+        "redaction": {
+          "extra_suffixes": [],
+          "replace_defaults": true
+        }
+      },
+      "input": {
+        "openai_api_key": "sk-fully-unmasked-on-purpose",
+        "db_password": "still-not-masked",
+        "user.id": 17
+      },
+      "expected": {
+        "openai_api_key": "sk-fully-unmasked-on-purpose",
+        "db_password": "still-not-masked",
+        "user.id": 17
+      }
+    }
+  ],
+
+  "validation_failures": [
+    {
+      "name": "empty_string_suffix_rejected",
+      "config": {
+        "redaction": {
+          "extra_suffixes": [""]
+        }
+      },
+      "expected_error": "redaction.extra_suffixes contains an empty string"
+    },
+    {
+      "name": "whitespace_suffix_rejected",
+      "config": {
+        "redaction": {
+          "extra_suffixes": ["_my secret"]
+        }
+      },
+      "expected_error": "redaction.extra_suffixes contains whitespace"
+    },
+    {
+      "name": "uppercase_suffix_rejected",
+      "config": {
+        "redaction": {
+          "extra_suffixes": ["_APIKEY"]
+        }
+      },
+      "expected_error": "redaction.extra_suffixes must be lowercase ASCII"
+    }
+  ]
+}
