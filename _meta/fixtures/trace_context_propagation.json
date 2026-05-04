@@ -1,0 +1,113 @@
+{
+  "_doc": "Conformance fixture for spec §3.4 — trace-context propagation modes (auto-inject vs explicit-ctx) and the auto_inject_trace_context cross-binding parity flag (M2). Cross-binding identity: dagstack-logger (Python), @dagstack/logger (TypeScript), go.dagstack.dev/logger (Go) MUST produce records whose trace_id / span_id / trace_flags fields match the `expected` block byte-for-byte (Canonical JSON, sample IDs are placeholders that the harness substitutes per-run).",
+  "_doc_version": "1.0",
+  "_spec_section": "3.4",
+
+  "_sample_trace_id": "0123456789abcdef0123456789abcdef",
+  "_sample_span_id":  "0123456789abcdef",
+  "_sample_trace_flags": 1,
+
+  "_doc_field_substitution": "When a fixture case sets `with_active_span: true`, the harness opens an OTel span seeded with the `_sample_*` IDs above before calling the emit method. Bindings that use the auto-inject path MUST observe these IDs; bindings in explicit-ctx mode receive the same IDs through the ctx parameter. The `expected.fields_absent` array lists keys whose presence in the wire record is forbidden (used to assert the trace fields are NOT injected in opt-out cases). All cases set trace_flags to 1 (sampled); unsampled-context behaviour is exercised by §14.2 unit tests, not this fixture.",
+
+  "cases": [
+    {
+      "name": "auto_inject_default_true_with_active_span",
+      "description": "auto_inject_trace_context = true (Python/TS default). With an active sampled span, plain logger.info(...) populates trace_id / span_id / trace_flags from the ambient OTel context.",
+      "applies_to_modes": ["auto-inject"],
+      "config": { "auto_inject_trace_context": true },
+      "with_active_span": true,
+      "emit": { "method": "info", "use_ctx_variant": false, "body": "ping" },
+      "expected": {
+        "trace_id":    "_sample_trace_id",
+        "span_id":     "_sample_span_id",
+        "trace_flags": "_sample_trace_flags"
+      }
+    },
+    {
+      "name": "auto_inject_disabled_with_active_span",
+      "description": "auto_inject_trace_context = false. Non-ctx emit MUST NOT consult the ambient context; trace_id / span_id / trace_flags are absent from the wire record.",
+      "applies_to_modes": ["auto-inject"],
+      "config": { "auto_inject_trace_context": false },
+      "with_active_span": true,
+      "emit": { "method": "info", "use_ctx_variant": false, "body": "ping" },
+      "expected": {
+        "fields_absent": ["trace_id", "span_id", "trace_flags"]
+      }
+    },
+    {
+      "name": "explicit_ctx_with_active_span",
+      "description": "Explicit-ctx mode (Go default). InfoCtx(ctx, ...) reads trace state from the supplied ctx; ambient state is NOT consulted.",
+      "applies_to_modes": ["explicit-ctx"],
+      "config": { "auto_inject_trace_context": false },
+      "with_active_span": true,
+      "emit": { "method": "info", "use_ctx_variant": true, "body": "ping" },
+      "expected": {
+        "trace_id":    "_sample_trace_id",
+        "span_id":     "_sample_span_id",
+        "trace_flags": "_sample_trace_flags"
+      }
+    },
+    {
+      "name": "explicit_ctx_with_nil_context",
+      "description": "Explicit-ctx mode with no/nil context — even inside an active ambient span, non-ctx emit produces a record without trace IDs.",
+      "applies_to_modes": ["explicit-ctx"],
+      "config": { "auto_inject_trace_context": false },
+      "with_active_span": true,
+      "emit": { "method": "info", "use_ctx_variant": false, "body": "ping" },
+      "expected": {
+        "fields_absent": ["trace_id", "span_id", "trace_flags"]
+      }
+    },
+    {
+      "name": "without_context_opt_out",
+      "description": "logger.without_context().info(...) — auto-inject opt-out for one call. Trace fields absent even with an active span.",
+      "applies_to_modes": ["auto-inject"],
+      "config": { "auto_inject_trace_context": true },
+      "with_active_span": true,
+      "emit": { "method": "info", "use_ctx_variant": false, "via_without_context": true, "body": "ping" },
+      "expected": {
+        "fields_absent": ["trace_id", "span_id", "trace_flags"]
+      }
+    },
+    {
+      "name": "no_active_span_no_injection",
+      "description": "Auto-inject mode with no active span. Trace fields absent even when the flag is true.",
+      "applies_to_modes": ["auto-inject"],
+      "config": { "auto_inject_trace_context": true },
+      "with_active_span": false,
+      "emit": { "method": "info", "use_ctx_variant": false, "body": "ping" },
+      "expected": {
+        "fields_absent": ["trace_id", "span_id", "trace_flags"]
+      }
+    },
+    {
+      "name": "auto_inject_without_context_no_span",
+      "description": "without_context() opt-out is a no-op when no span is active — must not raise. Wire output: trace fields absent.",
+      "applies_to_modes": ["auto-inject"],
+      "config": { "auto_inject_trace_context": true },
+      "with_active_span": false,
+      "emit": { "method": "info", "use_ctx_variant": false, "via_without_context": true, "body": "ping" },
+      "expected": {
+        "fields_absent": ["trace_id", "span_id", "trace_flags"]
+      }
+    },
+    {
+      "name": "explicit_ctx_with_flag_true_no_op",
+      "description": "Explicit-ctx mode with auto_inject_trace_context=true. The flag MUST be a no-op in explicit-ctx mode — the binding MUST NOT start consulting ambient context just because the flag is on. Wire output identical to explicit_ctx_with_active_span (case 3).",
+      "applies_to_modes": ["explicit-ctx"],
+      "config": { "auto_inject_trace_context": true },
+      "with_active_span": true,
+      "emit": { "method": "info", "use_ctx_variant": true, "body": "ping" },
+      "expected": {
+        "trace_id":    "_sample_trace_id",
+        "span_id":     "_sample_span_id",
+        "trace_flags": "_sample_trace_flags"
+      }
+    }
+  ],
+
+  "cross_binding_parity": {
+    "description": "To obtain byte-identical wire output across all three bindings (Python / TypeScript / Go), the operator MUST set `auto_inject_trace_context` explicitly to the same value in all three configurations (overriding the per-language defaults — Python/TS true vs Go false). When that condition holds and the same case is applied, the canonical-JSON wire bytes of the LogRecord MUST match byte-for-byte after the harness substitutes the per-run trace_id/span_id with the `_sample_*` placeholders for the byte-comparison step. This is the formal parity guarantee for §3.4.",
+    "non_ascii_safety": "Field substitution uses ASCII-only sentinels. Bindings that emit hex-encoded trace_id / span_id MUST use lowercase per §1; bindings that emit numeric trace_flags MUST use the unsigned integer form."
+  }
+}
